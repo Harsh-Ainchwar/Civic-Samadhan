@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 
   # Civic Reporting System Prototype
 
@@ -9,3 +10,7 @@
 
   Run `npm run dev` to start the development server.
   
+=======
+# Civic-Samadhan
+A platform for citizens to report civic issues with photos, auto-location, voice note.
+>>>>>>> f52ef6a53172d4124bac7ef90a8c9f5fb4eafc90
