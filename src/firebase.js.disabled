@@ -1,0 +1,141 @@
+import { initializeApp } from "firebase/app";
+// Firestore and Storage
+import { getFirestore, doc, setDoc, serverTimestamp, collection, getDocs } from "firebase/firestore";
+import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
+// Authentication
+import { getAuth, signInAnonymously } from "firebase/auth";
+// https://firebase.google.com/docs/web/setup#available-libraries
+
+// Your web app's Firebase configuration
+const firebaseConfig = {
+  apiKey: "AIzaSyDFp9r3ve05evgI5WHsSS0TV0hyRhaRSBI",
+  authDomain: "code4civic-d34e8.firebaseapp.com",
+  projectId: "code4civic-d34e8",
+  storageBucket: "code4civic-d34e8.firebasestorage.app",
+  messagingSenderId: "280880787685",
+  appId: "1:280880787685:web:fbbc28e5920656fa6b640c"
+};
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+
+// Firestore and Storage instances
+const db = getFirestore(app);
+const storage = getStorage(app);
+
+// Authentication instance
+const auth = getAuth(app);
+
+// Sign in anonymously to bypass security rules in prototype
+signInAnonymously(auth).then((userCredential) => {
+  console.log('Anonymous sign-in successful', userCredential.user.uid);
+}).catch((error) => {
+  console.error('Anonymous sign-in failed:', error);
+  // Even if anonymous sign-in fails, we'll still try to use the app
+  // Some operations might still work depending on Firestore rules
+});
+
+// Wait a bit for auth to initialize before first operations
+setTimeout(() => {
+  const user = auth.currentUser;
+  if (user) {
+    console.log('Firebase Auth initialized with user:', user.uid);
+  } else {
+    console.log('Firebase Auth initialized, no current user');
+  }
+}, 1000);
+
+// Helper: upload a data URL (base64) or Blob to Firebase Storage and return a public download URL
+async function uploadDataUrl(reportId, photo) {
+  // If the URL is already a remote URL (starts with http) skip upload
+  if (!photo?.url) return null;
+  if (photo.url.startsWith('http')) {
+    return photo.url;
+  }
+
+  // Convert data URL to Blob using fetch (works for data: URIs)
+  try {
+    const res = await fetch(photo.url);
+    const blob = await res.blob();
+
+    const path = `reports/${reportId}/${photo.id}-${photo.filename}`;
+    const ref = storageRef(storage, path);
+    await uploadBytes(ref, blob);
+    const downloadUrl = await getDownloadURL(ref);
+    return downloadUrl;
+  } catch (err) {
+    console.error('Firebase upload failed for', photo.filename, err);
+    throw err;
+  }
+}
+
+// Helper: save a report to Firestore. Uploads images to Storage when needed and stores final photo URLs in the document.
+export async function saveReport(report) {
+  try {
+    const photos = Array.isArray(report.photos) ? report.photos : [];
+    const uploadedPhotos = [];
+
+    for (const photo of photos) {
+      try {
+        const url = await uploadDataUrl(report.id, photo);
+        uploadedPhotos.push({ id: photo.id, filename: photo.filename, url });
+      } catch (err) {
+        // If a particular photo upload fails, still continue with others and record a null url
+        uploadedPhotos.push({ id: photo.id, filename: photo.filename, url: photo.url || null });
+      }
+    }
+
+    const docRef = doc(db, 'reports', String(report.id));
+    const payload = {
+      ...report,
+      photos: uploadedPhotos,
+      createdAt: serverTimestamp()
+    };
+
+    console.log('Saving report to Firestore:', payload);
+    await setDoc(docRef, payload);
+    console.log('Successfully saved report to Firestore');
+    return { ok: true, id: String(report.id) };
+  } catch (err) {
+    console.error('saveReport error', err);
+    // Provide more detailed error information
+    const errorInfo = {
+      message: err.message,
+      code: err.code || 'unknown',
+      name: err.name,
+      stack: err.stack
+    };
+    console.error('Detailed error info:', errorInfo);
+    
+    // Provide user-friendly error messages based on error codes
+    let userMessage = 'Failed to save your complaint to the database.';
+    if (err.code === 'permission-denied') {
+      userMessage += ' Permission denied. The database rules may need to be updated by an administrator.';
+    } else if (err.code === 'unauthenticated') {
+      userMessage += ' Authentication required. Please try again or contact support.';
+    } else if (err.message && err.message.includes('offline')) {
+      userMessage += ' Network connection issue. Please check your internet connection and try again.';
+    } else {
+      userMessage += ' An unexpected error occurred. Please try again or contact support.';
+    }
+    
+    return { ok: false, error: {...errorInfo, userMessage} };
+  }
+}
+
+// Helper: fetch all reports from Firestore
+export async function fetchReports() {
+  try {
+    const querySnapshot = await getDocs(collection(db, 'reports'));
+    const reports = [];
+    querySnapshot.forEach((doc) => {
+      reports.push({ id: doc.id, ...doc.data() });
+    });
+    return reports;
+  } catch (err) {
+    console.error('fetchReports error', err);
+    return [];
+  }
+}
+
+export { app, db, storage, auth };
